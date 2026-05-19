@@ -1,41 +1,214 @@
+using System.Text;
+using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.IdentityModel.Tokens;
+using Microsoft.OpenApi.Models;
+using TBCarePlus.API.Data;
+using TBCarePlus.API.Interfaces;
+using TBCarePlus.API.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
-builder.Services.AddOpenApi();
+// ── Load .env file (development only) ─────────────────────────────
+if (builder.Environment.IsDevelopment())
+{
+    var envPath = Path.Combine(builder.Environment.ContentRootPath, ".env");
+    if (File.Exists(envPath))
+    {
+        foreach (var line in File.ReadAllLines(envPath))
+        {
+            var trimmed = line.Trim();
+            if (string.IsNullOrEmpty(trimmed) || trimmed.StartsWith('#')) continue;
+
+            var eq = trimmed.IndexOf('=');
+            if (eq <= 0) continue;
+
+            var key = trimmed[..eq].Trim();
+            var val = trimmed[(eq + 1)..].Trim().TrimEnd('\r');
+
+            if (val.Length >= 2 && ((val[0] == '\'' && val[^1] == '\'') || (val[0] == '"' && val[^1] == '"')))
+                val = val[1..^1];
+
+            Environment.SetEnvironmentVariable(key, val);
+        }
+        Console.WriteLine("Loaded .env file.");
+    }
+    else
+    {
+        Console.WriteLine(".env file not found at: " + envPath);
+    }
+}
+
+// ── Override config from environment variables ────────────────────
+var dbUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
+if (!string.IsNullOrEmpty(dbUrl))
+{
+    builder.Configuration["ConnectionStrings:DefaultConnection"] = dbUrl;
+    Console.WriteLine("Using DATABASE_URL from environment.");
+}
+
+var supabaseUrl = Environment.GetEnvironmentVariable("SUPABASE_URL");
+if (!string.IsNullOrEmpty(supabaseUrl))
+    builder.Configuration["Supabase:Url"] = supabaseUrl.TrimEnd('/');
+
+var supabaseKey = Environment.GetEnvironmentVariable("SUPABASE_KEY");
+if (!string.IsNullOrEmpty(supabaseKey))
+    builder.Configuration["Supabase:Key"] = supabaseKey;
+
+var supabaseJwtSecret = Environment.GetEnvironmentVariable("SUPABASE_JWT_SECRET");
+if (!string.IsNullOrEmpty(supabaseJwtSecret))
+    builder.Configuration["Supabase:JwtSecret"] = supabaseJwtSecret;
+
+// ── Database ───────────────────────────────────────────────────────
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseNpgsql(
+        builder.Configuration.GetConnectionString("DefaultConnection"),
+        npgsql =>
+        {
+            npgsql.MigrationsHistoryTable("__EFMigrationsHistory", "tbcare_plus");
+            npgsql.EnableRetryOnFailure(maxRetryCount: 3);
+        }));
+
+// ── JWT Authentication ──────────────────────────────────────────────
+var jwtSecret = builder.Configuration["Supabase:JwtSecret"];
+byte[]? signingKeyBytes = null;
+
+if (!string.IsNullOrEmpty(jwtSecret))
+{
+    try
+    {
+        signingKeyBytes = Convert.FromBase64String(jwtSecret);
+        if (signingKeyBytes.Length < 16)
+            signingKeyBytes = Encoding.UTF8.GetBytes(jwtSecret);
+    }
+    catch
+    {
+        signingKeyBytes = Encoding.UTF8.GetBytes(jwtSecret);
+    }
+}
+
+if (signingKeyBytes is null)
+{
+    if (builder.Environment.IsDevelopment())
+    {
+        Console.ForegroundColor = ConsoleColor.Yellow;
+        Console.WriteLine("WARNING: Supabase:JwtSecret is not configured. Authentication will not be enforced.");
+        Console.ResetColor();
+    }
+    else
+    {
+        throw new InvalidOperationException("Missing configuration key 'Supabase:JwtSecret'.");
+    }
+}
+
+builder.Services
+    .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
+    .AddJwtBearer(options =>
+    {
+        options.TokenValidationParameters = new TokenValidationParameters
+        {
+            ValidateIssuerSigningKey = signingKeyBytes is not null,
+            IssuerSigningKey         = signingKeyBytes is not null
+                ? new SymmetricSecurityKey(signingKeyBytes) : null,
+            ValidateIssuer           = false,
+            ValidateAudience         = signingKeyBytes is not null,
+            ValidAudience            = "authenticated",
+            ValidateLifetime         = signingKeyBytes is not null,
+            ClockSkew                = TimeSpan.Zero,
+        };
+    });
+
+builder.Services.AddAuthorization();
+
+// ── Service Registrations ──────────────────────────────────────────
+builder.Services.AddScoped<ITbTypeService,    TbTypeService>();
+builder.Services.AddScoped<ISymptomService,   SymptomService>();
+builder.Services.AddScoped<IAssessmentService, AssessmentService>();
+builder.Services.AddScoped<IRiskLevelService, RiskLevelService>();
+builder.Services.AddScoped<IDiagnosisService, DiagnosisService>();
+builder.Services.AddScoped<IUserService,      UserService>();
+
+// ── CORS ────────────────────────────────────────────────────────────
+var allowedOrigins = builder.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>() ?? ["*"];
+
+builder.Services.AddCors(options =>
+    options.AddDefaultPolicy(policy =>
+        policy.WithOrigins(allowedOrigins)
+              .AllowAnyHeader()
+              .AllowAnyMethod()));
+
+builder.Services.AddControllers();
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen(c =>
+{
+    c.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "TBCare+ API",
+        Version = "v1",
+        Description = "Tuberculosis early-detection expert system API.",
+    });
+
+    var securityScheme = new OpenApiSecurityScheme
+    {
+        Name = "Authorization",
+        Description = "Enter: Bearer {your Supabase JWT}",
+        In = ParameterLocation.Header,
+        Type = SecuritySchemeType.Http,
+        Scheme = "bearer",
+        BearerFormat = "JWT",
+        Reference = new OpenApiReference
+        {
+            Id = JwtBearerDefaults.AuthenticationScheme,
+            Type = ReferenceType.SecurityScheme,
+        },
+    };
+    c.AddSecurityDefinition(securityScheme.Reference.Id, securityScheme);
+    c.AddSecurityRequirement(new OpenApiSecurityRequirement
+    {
+        { securityScheme, Array.Empty<string>() },
+    });
+
+    var xmlFile = $"{System.Reflection.Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath)) c.IncludeXmlComments(xmlPath);
+});
+
+// ── Railway: listen on PORT if set ─────────────────────────────────
+var railwayPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(railwayPort))
+{
+    builder.WebHost.UseUrls($"http://+:{railwayPort}");
+    Console.WriteLine($"Railway detected. Listening on port {railwayPort}.");
+}
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
-    app.MapOpenApi();
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "TBCare+ API v1");
+        c.RoutePrefix = string.Empty;
+    });
 }
 
-app.UseHttpsRedirection();
-
-var summaries = new[]
+if (!app.Environment.IsDevelopment())
 {
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () =>
-{
-    var forecast =  Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
-
-app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
+    app.UseHttpsRedirection();
 }
+
+app.UseCors();
+app.UseAuthentication();
+app.UseAuthorization();
+app.MapControllers();
+
+using (var scope = app.Services.CreateScope())
+{
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await context.Database.MigrateAsync();
+}
+
+await app.RunAsync();
