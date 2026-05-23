@@ -119,6 +119,7 @@ builder.Services
     });
 
 builder.Services.AddAuthorization();
+builder.Services.AddHttpClient();
 
 // ── Service Registrations ──────────────────────────────────────────
 builder.Services.AddScoped<ITbTypeService,    TbTypeService>();
@@ -126,7 +127,6 @@ builder.Services.AddScoped<ISymptomService,   SymptomService>();
 builder.Services.AddScoped<IAssessmentService, AssessmentService>();
 builder.Services.AddScoped<IRiskLevelService, RiskLevelService>();
 builder.Services.AddScoped<IDiagnosisService, DiagnosisService>();
-builder.Services.AddScoped<IUserService,      UserService>();
 
 // ── CORS ────────────────────────────────────────────────────────────
 var allowedOrigins = builder.Configuration
@@ -135,9 +135,12 @@ var allowedOrigins = builder.Configuration
 
 builder.Services.AddCors(options =>
     options.AddDefaultPolicy(policy =>
-        policy.WithOrigins(allowedOrigins)
-              .AllowAnyHeader()
-              .AllowAnyMethod()));
+    {
+        if (allowedOrigins is ["*"])
+            policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod();
+        else
+            policy.WithOrigins(allowedOrigins).AllowAnyHeader().AllowAnyMethod();
+    }));
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

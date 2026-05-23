@@ -17,9 +17,6 @@ public class AssessmentSession
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
-    [ForeignKey(nameof(UserId))]
-    public User User { get; set; } = null!;
-
     [ForeignKey(nameof(AssessmentTypeId))]
     public AssessmentType AssessmentType { get; set; } = null!;
 

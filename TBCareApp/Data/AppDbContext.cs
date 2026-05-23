@@ -7,7 +7,6 @@ public class AppDbContext : DbContext
 {
     public AppDbContext(DbContextOptions<AppDbContext> options) : base(options) { }
 
-    public DbSet<User> Users => Set<User>();
     public DbSet<TbType> TbTypes => Set<TbType>();
     public DbSet<Symptom> Symptoms => Set<Symptom>();
     public DbSet<AssessmentType> AssessmentTypes => Set<AssessmentType>();
@@ -23,12 +22,6 @@ public class AppDbContext : DbContext
         base.OnModelCreating(modelBuilder);
 
         modelBuilder.HasDefaultSchema("tbcare_plus");
-
-        modelBuilder.Entity<User>(entity =>
-        {
-            entity.ToTable("users");
-            entity.HasIndex(e => e.Email).HasDatabaseName("idx_users_email");
-        });
 
         modelBuilder.Entity<TbType>(entity =>
         {
@@ -96,7 +89,6 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("assessment_sessions");
             entity.Property(e => e.CreatedAt).HasDefaultValueSql("now()");
-            entity.HasOne(e => e.User).WithMany(u => u.Sessions).HasForeignKey(e => e.UserId).OnDelete(DeleteBehavior.Cascade);
             entity.HasOne(e => e.AssessmentType).WithMany(at => at.AssessmentSessions).HasForeignKey(e => e.AssessmentTypeId).OnDelete(DeleteBehavior.Restrict);
         });
 
