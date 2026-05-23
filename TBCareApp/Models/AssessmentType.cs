@@ -17,6 +17,14 @@ public class AssessmentType
 
     public string? Description { get; set; }
 
+    [Required, MaxLength(50)]
+    public string ScoringMethod { get; set; } = "sequential_cf";
+
+    public double SaturationK { get; set; } = 0.35;
+
+    [MaxLength(50)]
+    public string? ResultUnit { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 

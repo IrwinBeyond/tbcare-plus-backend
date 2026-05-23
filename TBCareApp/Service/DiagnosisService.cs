@@ -62,7 +62,7 @@ public class DiagnosisService : IDiagnosisService
 
                 double cfValue = (double)matchingQuestion.CfValue;
                 double weight = (double)rule.Weight;
-                double score = weight * cfValue;
+                double ruleCF = weight * cfValue;
 
                 symptomDetails.Add(new SymptomDetail
                 {
@@ -71,11 +71,15 @@ public class DiagnosisService : IDiagnosisService
                     Weight = weight,
                 });
 
-                totalScore += score;
+                totalScore += ruleCF;
             }
 
+            double k = assessmentType.SaturationK;
+            double finalCF = totalScore == 0 ? 0 : 1 - Math.Exp(-k * totalScore);
+            double percentage = finalCF * 100;
+
             var riskLevel = await _db.RiskLevels
-                .Where(rl => rl.TbTypeId == tbType.Id && totalScore >= rl.MinScore && totalScore <= rl.MaxScore)
+                .Where(rl => rl.TbTypeId == tbType.Id && percentage >= rl.MinScore && percentage <= rl.MaxScore)
                 .OrderBy(rl => rl.MinScore)
                 .FirstOrDefaultAsync();
 
@@ -83,7 +87,8 @@ public class DiagnosisService : IDiagnosisService
             {
                 TbTypeName = tbType.Name,
                 TbTypeCode = tbType.Code,
-                TotalScore = totalScore,
+                CombinedCF = Math.Round(finalCF, 4),
+                TotalScore = Math.Round(percentage, 1),
                 RiskLevel = riskLevel is null ? null : new RiskLevelResult
                 {
                     Title = riskLevel.Title, Code = riskLevel.Code,
@@ -96,7 +101,7 @@ public class DiagnosisService : IDiagnosisService
             _db.AssessmentResults.Add(new AssessmentResult
             {
                 SessionId = session.Id, TbTypeId = tbType.Id,
-                RiskLevelId = riskLevel?.Id, TotalScore = (decimal)totalScore,
+                RiskLevelId = riskLevel?.Id, TotalScore = (decimal)percentage,
             });
         }
 

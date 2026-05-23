@@ -26,6 +26,7 @@ public class TbTypeResult
 {
     public string TbTypeName { get; set; } = string.Empty;
     public string? TbTypeCode { get; set; }
+    public double CombinedCF { get; set; }
     public double TotalScore { get; set; }
     public RiskLevelResult? RiskLevel { get; set; }
     public List<SymptomDetail> SymptomDetails { get; set; } = new();
@@ -63,4 +64,28 @@ public class HistoryResultDto
     public double TotalScore { get; set; }
     public string? RiskLevelTitle { get; set; }
     public string? RiskLevelCode { get; set; }
+}
+
+// ── Quick Check Config ────────────────────────────────────────────────
+public class QuickCheckConfigDto
+{
+    public List<QuickCheckQuestionDto> Questions { get; set; } = new();
+    public List<RiskLevelDto> RiskLevels { get; set; } = new();
+    public string ScoringMethod { get; set; } = "soft_saturation_cf";
+    public double SaturationK { get; set; } = 0.35;
+}
+
+public class QuickCheckQuestionDto
+{
+    public int QuestionId { get; set; }
+    public int SymptomId { get; set; }
+    public string SymptomCode { get; set; } = string.Empty;
+    public string SymptomName { get; set; } = string.Empty;
+    public string? SymptomDescription { get; set; }
+    public string QuestionText { get; set; } = string.Empty;
+    public int SortOrder { get; set; }
+    public bool IsRequired { get; set; }
+    public decimal Weight { get; set; }
+    public int TbTypeId { get; set; }
+    public string? TbTypeName { get; set; }
 }
