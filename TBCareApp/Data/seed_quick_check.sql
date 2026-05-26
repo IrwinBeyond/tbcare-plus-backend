@@ -51,10 +51,14 @@ ON CONFLICT (id) DO NOTHING;
 
 -- 6. Risk Levels for TB_PARU
 INSERT INTO tbcare_plus.risk_levels (id, tb_type_id, code, title, min_score, max_score, description, recommendation, created_at, updated_at) VALUES
-(1, 1, 'LOW',    'Low Risk',    0,  30, 'Your symptoms show low indications of TBC. Stay healthy and monitor your condition.',                       'No immediate action needed. Maintain a healthy lifestyle.',                          NOW(), NOW()),
-(2, 1, 'MEDIUM', 'Medium Risk', 31, 60, 'Some symptoms require attention. It is recommended to continue with a more detailed assessment.',          'Continue with a full assessment for more accurate evaluation.',                       NOW(), NOW()),
-(3, 1, 'HIGH',   'High Risk',   61, 100, 'Your symptoms strongly indicate potential TBC. Please proceed with a full assessment and seek medical attention.', 'Seek medical attention promptly and complete the full assessment.',          NOW(), NOW())
-ON CONFLICT (id) DO NOTHING;
+(1, 1, 'LOW',    'Risiko Rendah',    0,  30, 'Gejala Anda menunjukkan indikasi rendah TBC. Jaga kesehatan dan pantau kondisi Anda.',                       'Tidak perlu tindakan segera. Pertahankan gaya hidup sehat.',                          NOW(), NOW()),
+(2, 1, 'MEDIUM', 'Risiko Sedang',    31, 60, 'Beberapa gejala memerlukan perhatian. Disarankan untuk melanjutkan dengan pemeriksaan yang lebih detail.', 'Lanjutkan dengan pemeriksaan lengkap untuk evaluasi yang lebih akurat.',               NOW(), NOW()),
+(3, 1, 'HIGH',   'Risiko Tinggi',    61, 100, 'Gejala Anda sangat mengindikasikan potensi TBC. Silakan lanjutkan dengan pemeriksaan lengkap dan cari bantuan medis.', 'Segera cari bantuan medis dan selesaikan pemeriksaan lengkap.',          NOW(), NOW())
+ON CONFLICT (id) DO UPDATE SET
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  recommendation = EXCLUDED.recommendation,
+  updated_at = NOW();
 
 -- 7. Reset sequences to prevent ID conflicts
 SELECT setval('tbcare_plus.tb_types_id_seq', COALESCE((SELECT MAX(id) FROM tbcare_plus.tb_types), 1));
