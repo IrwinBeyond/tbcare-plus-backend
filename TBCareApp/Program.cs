@@ -244,11 +244,11 @@ builder.Services.AddSwaggerGen(c =>
     if (File.Exists(xmlPath)) c.IncludeXmlComments(xmlPath);
 });
 
-// ── Railway: listen on PORT if set ─────────────────────────────────
-var railwayPort = Environment.GetEnvironmentVariable("PORT");
-if (!string.IsNullOrEmpty(railwayPort))
+// ── Cloud Provider: listen on PORT if set ──────────────────────────
+var envPort = Environment.GetEnvironmentVariable("PORT");
+if (!string.IsNullOrEmpty(envPort))
 {
-    builder.WebHost.UseUrls($"http://+:{railwayPort}");
+    builder.WebHost.UseUrls($"http://+:{envPort}");
 }
 
 var app = builder.Build();
