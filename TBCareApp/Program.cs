@@ -9,6 +9,47 @@ using TBCarePlus.API.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+// ── Kill stale process on dev port (Development only) ──────────────
+if (builder.Environment.IsDevelopment())
+{
+    const int devPort = 5181;
+    try
+    {
+        var props = System.Net.NetworkInformation.IPGlobalProperties.GetIPGlobalProperties();
+        bool portInUse = props.GetActiveTcpListeners().Any(ep => ep.Port == devPort);
+        if (portInUse)
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo("netstat", "-ano")
+            {
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            using var netstat = System.Diagnostics.Process.Start(psi)!;
+            string output = await netstat.StandardOutput.ReadToEndAsync();
+            await netstat.WaitForExitAsync();
+
+            foreach (var line in output.Split('\n'))
+            {
+                if (line.Contains($":{devPort}") && line.Contains("LISTENING"))
+                {
+                    var parts = line.Trim().Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                    if (parts.Length > 0 && int.TryParse(parts[^1], out int pid))
+                    {
+                        try
+                        {
+                            System.Diagnostics.Process.GetProcessById(pid).Kill(entireProcessTree: true);
+                        }
+                        catch { /* process may have already exited */ }
+                    }
+                }
+            }
+            await Task.Delay(600); // give the OS time to release the port
+        }
+    }
+    catch { /* non-critical – ignore errors in port cleanup */ }
+}
+
 // ── Load .env file (development only) ─────────────────────────────
 if (builder.Environment.IsDevelopment())
 {
@@ -31,11 +72,10 @@ if (builder.Environment.IsDevelopment())
 
             Environment.SetEnvironmentVariable(key, val);
         }
-        Console.WriteLine("Loaded .env file.");
     }
     else
     {
-        Console.WriteLine(".env file not found at: " + envPath);
+        // Console.WriteLine(".env file not found at: " + envPath);
     }
 }
 
@@ -44,7 +84,6 @@ var dbUrl = Environment.GetEnvironmentVariable("DATABASE_URL");
 if (!string.IsNullOrEmpty(dbUrl))
 {
     builder.Configuration["ConnectionStrings:DefaultConnection"] = dbUrl;
-    Console.WriteLine("Using DATABASE_URL from environment.");
 }
 
 var supabaseUrl = Environment.GetEnvironmentVariable("SUPABASE_URL");
@@ -210,7 +249,6 @@ var railwayPort = Environment.GetEnvironmentVariable("PORT");
 if (!string.IsNullOrEmpty(railwayPort))
 {
     builder.WebHost.UseUrls($"http://+:{railwayPort}");
-    Console.WriteLine($"Railway detected. Listening on port {railwayPort}.");
 }
 
 var app = builder.Build();
