@@ -1,0 +1,24 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    - cron: '0 * * * *' # Runs automatically every hour
+  workflow_dispatch: # Allows you to trigger it manually if you want
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout target repo
+        uses: actions/checkout@v3
+        with:
+          ref: main
+          
+      - name: Sync upstream changes
+        id: sync
+        uses: aormsby/Fork-Sync-With-Upstream-action@v3.4
+        with:
+          target_sync_branch: main
+          target_repo_token: ${{ secrets.GITHUB_TOKEN }}
+          upstream_sync_branch: main
+          upstream_sync_repo: yakinikuSSS/backend-tbcare # The original repository
