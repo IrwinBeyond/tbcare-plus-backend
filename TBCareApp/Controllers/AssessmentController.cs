@@ -62,6 +62,14 @@ public class AssessmentController : ControllerBase
         }
     }
 
+    private static int RiskRank(string? code)
+    {
+        var c = (code ?? "").ToUpperInvariant();
+        if (c.Contains("HIGH")) return 3;
+        if (c.Contains("MEDIUM") || c.Contains("MODERATE")) return 2;
+        return 1;
+    }
+
     [AllowAnonymous]
     [HttpGet("quick-check-config")]
     public async Task<IActionResult> GetQuickCheckConfig()
@@ -310,6 +318,9 @@ public class AssessmentController : ControllerBase
         var breakdown = new List<object>();
         var historyRecords = new List<AssessmentHistory>();
 
+        // Per-TB-type breakdown (used for score calculation and history records)
+        var perTbTypeResults = new List<(int tbTypeId, string tbTypeName, double combinedCf, double score, RiskLevel? matched, object payload)>();
+
         foreach (var tbTypeId in tbTypeIds)
         {
             sumByTbType.TryGetValue(tbTypeId, out var sum);
@@ -348,20 +359,52 @@ public class AssessmentController : ControllerBase
             };
 
             breakdown.Add(resultPayload);
+            perTbTypeResults.Add((tbTypeId, resultPayload.tbTypeName, combinedCf, score, matched, resultPayload));
+        }
 
-            // Create a history record for each TB type in full assessment
-            // or just the primary one in quick assessment (though quick check usually only has one type anyway)
+        if (isQuickAssessment)
+        {
+            // Quick check: create ONE history record with the highest-risk TB type as primary.
+            var best = perTbTypeResults
+                .OrderByDescending(r => RiskRank(r.matched?.Code))
+                .ThenByDescending(r => r.score)
+                .First();
+
+            // Overall score: weighted average across TB types or just the best TB type's score
+            var overallScore = best.score;
+            var overallCf = best.combinedCf;
+            var overallTbTypeId = best.tbTypeId;
+            var overallTbTypeName = best.tbTypeName;
+
             historyRecords.Add(new AssessmentHistory
             {
                 UserId = userId,
                 AssessmentTypeId = request.AssessmentTypeId,
-                PrimaryTbTypeId = tbTypeId,
-                RiskLevelId = matched?.Id ?? 0,
-                TotalScore = (decimal)score,
-                SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms.Cast<dynamic>().Where(s => s.tbTypeId == tbTypeId || s.tbTypeId == 1).ToList()), // Pulmonary symptoms are often shared
-                ScoreBreakdown = JsonSerializer.Serialize(new { results = new[] { resultPayload } }),
+                PrimaryTbTypeId = overallTbTypeId,
+                RiskLevelId = best.matched?.Id ?? 0,
+                TotalScore = (decimal)overallScore,
+                SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms),
+                ScoreBreakdown = JsonSerializer.Serialize(new { results = breakdown }),
                 CreatedAt = submissionAtUtc,
             });
+        }
+        else
+        {
+            // Full assessment: create one record per TB type.
+            foreach (var (tbTypeId, tbTypeName, combinedCf, score, matched, payload) in perTbTypeResults)
+            {
+                historyRecords.Add(new AssessmentHistory
+                {
+                    UserId = userId,
+                    AssessmentTypeId = request.AssessmentTypeId,
+                    PrimaryTbTypeId = tbTypeId,
+                    RiskLevelId = matched?.Id ?? 0,
+                    TotalScore = (decimal)score,
+                    SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms.Cast<dynamic>().Where(s => s.tbTypeId == tbTypeId || s.tbTypeId == 1).ToList()),
+                    ScoreBreakdown = JsonSerializer.Serialize(new { results = new[] { payload } }),
+                    CreatedAt = submissionAtUtc,
+                });
+            }
         }
 
         // Finalize history records - ensure RiskLevelId is valid
@@ -418,14 +461,6 @@ public class AssessmentController : ControllerBase
             .OrderByDescending(h => h.CreatedAt)
             .ToListAsync();
 
-        int RiskRank(string? code)
-        {
-            var c = (code ?? "").ToUpperInvariant();
-            if (c.Contains("HIGH")) return 3;
-            if (c.Contains("MEDIUM") || c.Contains("MODERATE")) return 2;
-            return 1;
-        }
-
         DateTime RoundToSecondUtc(DateTime dt)
         {
             var utc = dt.Kind == DateTimeKind.Utc ? dt : dt.ToUniversalTime();
@@ -437,7 +472,7 @@ public class AssessmentController : ControllerBase
             .Select(g =>
             {
                 var best = g
-                    .OrderByDescending(h => RiskRank(h.RiskLevel.Code))
+                    .OrderByDescending(h => RiskRank(h.RiskLevel?.Code))
                     .ThenByDescending(h => h.TotalScore)
                     .First();
 
@@ -449,12 +484,12 @@ public class AssessmentController : ControllerBase
                     sessionKey,
                     createdAt = createdAtUtc,
                     assessmentTypeId = g.Key.AssessmentTypeId,
-                    assessmentTypeName = best.AssessmentType.Name,
+                    assessmentTypeName = best.AssessmentType?.Name ?? "Assessment",
                     riskLevelId = best.RiskLevelId,
-                    riskLevelTitle = best.RiskLevel.Title,
-                    riskLevelCode = best.RiskLevel.Code,
+                    riskLevelTitle = best.RiskLevel?.Title ?? "Unknown",
+                    riskLevelCode = best.RiskLevel?.Code ?? "LOW",
                     primaryTbTypeId = best.PrimaryTbTypeId,
-                    primaryTbTypeName = best.PrimaryTbType.Name,
+                    primaryTbTypeName = best.PrimaryTbType?.Name ?? "Unknown",
                     totalScore = best.TotalScore,
                     historyIds = g.Select(x => x.Id).OrderBy(x => x).ToList(),
                 };
@@ -490,12 +525,12 @@ public class AssessmentController : ControllerBase
             {
                 h.Id,
                 h.AssessmentTypeId,
-                assessmentTypeName = h.AssessmentType.Name,
+                assessmentTypeName = h.AssessmentType != null ? h.AssessmentType.Name : "Assessment",
                 h.PrimaryTbTypeId,
-                primaryTbTypeName = h.PrimaryTbType.Name,
+                primaryTbTypeName = h.PrimaryTbType != null ? h.PrimaryTbType.Name : "Unknown",
                 h.RiskLevelId,
-                riskLevelTitle = h.RiskLevel.Title,
-                riskLevelCode = h.RiskLevel.Code,
+                riskLevelTitle = h.RiskLevel != null ? h.RiskLevel.Title : "Unknown",
+                riskLevelCode = h.RiskLevel != null ? h.RiskLevel.Code : "LOW",
                 h.TotalScore,
                 h.ResultNote,
                 h.CreatedAt,
@@ -533,12 +568,12 @@ public class AssessmentController : ControllerBase
             {
                 h.Id,
                 h.AssessmentTypeId,
-                AssessmentTypeName = h.AssessmentType.Name,
+                AssessmentTypeName = h.AssessmentType != null ? h.AssessmentType.Name : "Assessment",
                 h.PrimaryTbTypeId,
-                PrimaryTbTypeName = h.PrimaryTbType.Name,
+                PrimaryTbTypeName = h.PrimaryTbType != null ? h.PrimaryTbType.Name : "Unknown",
                 h.RiskLevelId,
-                RiskLevelTitle = h.RiskLevel.Title,
-                RiskLevelCode = h.RiskLevel.Code,
+                RiskLevelTitle = h.RiskLevel != null ? h.RiskLevel.Title : "Unknown",
+                RiskLevelCode = h.RiskLevel != null ? h.RiskLevel.Code : "LOW",
                 h.TotalScore,
                 h.CreatedAt,
             })
@@ -566,12 +601,12 @@ public class AssessmentController : ControllerBase
         {
             history.Id,
             history.AssessmentTypeId,
-            AssessmentTypeName = history.AssessmentType.Name,
+            AssessmentTypeName = history.AssessmentType != null ? history.AssessmentType.Name : "Assessment",
             history.PrimaryTbTypeId,
-            PrimaryTbTypeName = history.PrimaryTbType.Name,
+            PrimaryTbTypeName = history.PrimaryTbType != null ? history.PrimaryTbType.Name : "Unknown",
             history.RiskLevelId,
-            RiskLevelTitle = history.RiskLevel.Title,
-            RiskLevelCode = history.RiskLevel.Code,
+            RiskLevelTitle = history.RiskLevel != null ? history.RiskLevel.Title : "Unknown",
+            RiskLevelCode = history.RiskLevel != null ? history.RiskLevel.Code : "LOW",
             history.TotalScore,
             history.ResultNote,
             history.CreatedAt,
