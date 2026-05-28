@@ -1,1 +1,85 @@
-# backend-tbcare-
+# TBCare+ API
+
+ASP.NET Core backend for the TBCare+ tuberculosis early-detection expert system. Provides REST APIs for authentication, symptom assessment, risk calculation, and assessment history.
+
+## Tech Stack
+
+- **Runtime**: .NET 10
+- **Framework**: ASP.NET Core Web API
+- **Database**: PostgreSQL (via Entity Framework Core + Npgsql)
+- **Auth**: Supabase JWT (HS256 / RS256)
+- **Deploy**: Azure App Service via Docker
+
+## Endpoints
+
+### Auth
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/api/v1/auth/register` | Register new user |
+| POST | `/api/v1/auth/login` | Login, returns Supabase JWT |
+| GET | `/api/v1/auth/me` | Get current user profile |
+| PUT | `/api/v1/auth/me` | Update user profile |
+| POST | `/api/v1/auth/change-password` | Change password |
+
+### Assessment
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/assessment/quick-check-config` | Quick check question config |
+| GET | `/api/v1/assessment/full-assessment-config` | Full assessment question config |
+| POST | `/api/v1/assessment/submit` | Submit assessment answers |
+| GET | `/api/v1/assessment/history` | List individual assessment records |
+| GET | `/api/v1/assessment/history-sessions` | List grouped history sessions |
+| GET | `/api/v1/assessment/history-sessions/{key}` | Session detail with insights |
+| GET | `/api/v1/assessment/history/{id}` | Single assessment details |
+
+## Getting Started
+
+### Prerequisites
+
+- .NET 10 SDK
+- PostgreSQL (or Supabase project)
+
+### Configuration
+
+Create a `.env` file in `TBCareApp/` with:
+
+```env
+DATABASE_URL=Host=localhost;Database=tbcare_plus;Username=postgres;Password=yourpassword
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-anon-key
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+SUPABASE_JWT_SECRET=your-jwt-secret
+```
+
+Alternatively, configure `appsettings.json` directly.
+
+### Run
+
+```bash
+cd TBCareApp
+dotnet run
+```
+
+The API starts at `http://localhost:5181` with Swagger UI at the root.
+
+### Docker
+
+```bash
+docker build -t tbcare-plus-api .
+docker run -p 8080:8080 --env-file TBCareApp/.env tbcare-plus-api
+```
+
+## Project Structure
+
+```
+TBCareApp/
+├── Controllers/    # API controllers
+├── Data/           # DbContext, migrations
+├── DTOs/           # Request/response models
+├── Interfaces/     # Service interfaces
+├── Models/         # Domain entities
+├── Services/       # Business logic, Supabase integration
+└── Program.cs      # App entry point, DI, middleware
+```
