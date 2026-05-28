@@ -208,6 +208,78 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { message = "Profile updated." }, "Profile updated successfully."));
     }
 
+    [HttpPost("change-password")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    public async Task<IActionResult> ChangePassword([FromBody] ChangePasswordRequest request)
+    {
+        if (string.IsNullOrEmpty(request.CurrentPassword) ||
+            string.IsNullOrEmpty(request.NewPassword) ||
+            string.IsNullOrEmpty(request.ConfirmPassword))
+            return BadRequest(ApiResponse<object>.Fail("Semua kolom kata sandi harus diisi."));
+
+        if (request.NewPassword != request.ConfirmPassword)
+            return BadRequest(ApiResponse<object>.Fail("Kata sandi baru dan konfirmasi tidak cocok."));
+
+        if (request.NewPassword.Length < 6)
+            return BadRequest(ApiResponse<object>.Fail("Kata sandi baru minimal 6 karakter."));
+
+        var email = User.FindFirst(System.Security.Claims.ClaimTypes.Email)?.Value
+                    ?? User.FindFirst("email")?.Value;
+        if (string.IsNullOrEmpty(email))
+            return Unauthorized(ApiResponse<object>.Fail("Email tidak ditemukan dalam token."));
+
+        var supabaseUrl = _config["Supabase:Url"];
+        var supabaseKey = _config["Supabase:Key"];
+
+        if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseKey))
+            return StatusCode(500, ApiResponse<object>.Fail("Supabase configuration is missing."));
+
+        using var http = _httpClientFactory.CreateClient();
+
+        // Step 1: Verify current password by attempting sign-in
+        var verifyPayload = new { email, password = request.CurrentPassword };
+        var verifyBody = new StringContent(
+            JsonSerializer.Serialize(verifyPayload), Encoding.UTF8, "application/json");
+
+        var verifyRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"{supabaseUrl}/auth/v1/token?grant_type=password")
+        {
+            Content = verifyBody
+        };
+        verifyRequest.Headers.Add("apikey", supabaseKey);
+
+        var verifyResponse = await http.SendAsync(verifyRequest);
+        if (!verifyResponse.IsSuccessStatusCode)
+        {
+            return BadRequest(ApiResponse<object>.Fail("Kata sandi saat ini salah."));
+        }
+
+        // Step 2: Change password using the current access token
+        var authHeader = Request.Headers.Authorization.ToString();
+        var changePayload = new { password = request.NewPassword };
+        var changeBody = new StringContent(
+            JsonSerializer.Serialize(changePayload), Encoding.UTF8, "application/json");
+
+        var changeRequest = new HttpRequestMessage(HttpMethod.Put,
+            $"{supabaseUrl}/auth/v1/user")
+        {
+            Content = changeBody
+        };
+        changeRequest.Headers.Add("apikey", supabaseKey);
+        changeRequest.Headers.Add("Authorization", authHeader);
+
+        var changeResponse = await http.SendAsync(changeRequest);
+        var changeResponseBody = await changeResponse.Content.ReadAsStringAsync();
+
+        if (!changeResponse.IsSuccessStatusCode)
+        {
+            var msg = ParseSupabaseError(changeResponseBody, "Gagal mengubah kata sandi.");
+            return BadRequest(ApiResponse<object>.Fail(msg));
+        }
+
+        return Ok(ApiResponse<object>.Ok(new { message = "Password changed successfully." }, "Kata sandi berhasil diubah."));
+    }
+
     /// <summary>
     /// Parses a Supabase error response body into a human-readable message.
     /// Supabase uses different error shapes depending on the endpoint:
@@ -290,6 +362,13 @@ public class AuthLoginRequest
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+}
+
+public class ChangePasswordRequest
+{
+    public string CurrentPassword { get; set; } = string.Empty;
+    public string NewPassword { get; set; } = string.Empty;
+    public string ConfirmPassword { get; set; } = string.Empty;
 }
 
 public class AuthResponseDto
