@@ -417,6 +417,24 @@ public class AssessmentController : ControllerBase
             return levels.Last();
         }
 
+        // Build symptomId → set of tbTypeIds it contributes to (for shared symptom display)
+        var codeToTbTypes = new Dictionary<string, HashSet<int>>();
+        foreach (var s in allSymptomCodes)
+        {
+            var baseCode = GetBaseCode(s.Code);
+            if (!codeToTbTypes.ContainsKey(baseCode))
+                codeToTbTypes[baseCode] = new HashSet<int>();
+            codeToTbTypes[baseCode].Add(s.TbTypeId);
+        }
+        var symptomTbTypes = new Dictionary<int, HashSet<int>>();
+        foreach (var s in allSymptomCodes)
+        {
+            if (!IsVariantCode(s.Code))
+            {
+                symptomTbTypes[s.SymptomId] = codeToTbTypes[GetBaseCode(s.Code)];
+            }
+        }
+
         var breakdown = new List<object>();
         var historyRecords = new List<AssessmentHistory>();
 
@@ -502,7 +520,7 @@ public class AssessmentController : ControllerBase
                     PrimaryTbTypeId = tbTypeId,
                     RiskLevelId = matched?.Id ?? 0,
                     TotalScore = (decimal)score,
-                    SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms.Cast<dynamic>().Where(s => (int)s.tbTypeId == tbTypeId).ToList()),
+                    SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms.Cast<dynamic>().Where(s => (int)s.tbTypeId == tbTypeId || (symptomTbTypes.TryGetValue((int)s.symptomId, out var ids) && ids.Contains(tbTypeId))).ToList()),
                     ScoreBreakdown = JsonSerializer.Serialize(new { results = new[] { payload } }),
                     CreatedAt = submissionAtUtc,
                 });
