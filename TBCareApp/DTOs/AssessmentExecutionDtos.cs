@@ -88,4 +88,12 @@ public class QuickCheckQuestionDto
     public decimal Weight { get; set; }
     public int TbTypeId { get; set; }
     public string? TbTypeName { get; set; }
+    public List<TbTypeWeightDto> ApplicableTbTypes { get; set; } = new();
+}
+
+public class TbTypeWeightDto
+{
+    public int TbTypeId { get; set; }
+    public string TbTypeName { get; set; } = string.Empty;
+    public decimal Weight { get; set; }
 }
