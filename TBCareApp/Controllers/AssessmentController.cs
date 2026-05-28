@@ -70,6 +70,21 @@ public class AssessmentController : ControllerBase
         return 1;
     }
 
+    // ── Symptom variant helpers ───────────────────────────────────────
+    // Variant codes end with a letter (e.g. G01a, G03b). Stripping trailing
+    // letters yields the base code (e.g. G01, G03). Base codes belong to
+    // tb_type=1; variants map to other TB types with their own weights.
+
+    private static string GetBaseCode(string code)
+    {
+        while (code.Length > 0 && char.IsLetter(code[^1]))
+            code = code[..^1];
+        return code;
+    }
+
+    private static bool IsVariantCode(string code)
+        => code.Length > 0 && char.IsLetter(code[^1]);
+
     [AllowAnonymous]
     [HttpGet("quick-check-config")]
     public async Task<IActionResult> GetQuickCheckConfig()
@@ -80,6 +95,7 @@ public class AssessmentController : ControllerBase
 
         var questions = await _db.AssessmentQuestions
             .Include(q => q.Symptom)
+            .ThenInclude(s => s.TbType)
             .Where(q => q.AssessmentTypeId == quickCheckTypeId)
             .OrderBy(q => q.SortOrder)
             .Select(q => new QuickCheckQuestionDto
@@ -100,6 +116,20 @@ public class AssessmentController : ControllerBase
                     .FirstOrDefault(),
                 TbTypeId = q.Symptom.TbTypeId,
                 TbTypeName = q.Symptom.TbType.Name,
+                ApplicableTbTypes = new List<TbTypeWeightDto>
+                {
+                    new TbTypeWeightDto
+                    {
+                        TbTypeId = q.Symptom.TbTypeId,
+                        TbTypeName = q.Symptom.TbType.Name,
+                        Weight = _db.RiskRules
+                            .Where(r => r.AssessmentTypeId == quickCheckTypeId
+                                     && r.SymptomId == q.SymptomId
+                                     && r.IsActive)
+                            .Select(r => r.Weight)
+                            .FirstOrDefault(),
+                    },
+                },
             })
             .ToListAsync();
 
@@ -137,32 +167,70 @@ public class AssessmentController : ControllerBase
 
         var assessmentType = await _db.AssessmentTypes.FindAsync(fullAssessmentTypeId);
 
-        var questions = await _db.AssessmentQuestions
+        // Fetch all questions including variant symptoms
+        var allQuestions = await _db.AssessmentQuestions
             .Include(q => q.Symptom)
+            .ThenInclude(s => s.TbType)
             .Where(q => q.AssessmentTypeId == fullAssessmentTypeId)
             .OrderBy(q => q.SortOrder)
-            .Select(q => new QuickCheckQuestionDto
-            {
-                QuestionId = q.Id,
-                SymptomId = q.SymptomId,
-                SymptomCode = q.Symptom.Code,
-                SymptomName = q.Symptom.Name,
-                SymptomDescription = q.Symptom.Description,
-                QuestionText = q.QuestionText,
-                SortOrder = q.SortOrder,
-                IsRequired = q.IsRequired,
-                Weight = _db.RiskRules
-                    .Where(r => r.AssessmentTypeId == fullAssessmentTypeId
-                             && r.SymptomId == q.SymptomId
-                             && r.IsActive)
-                    .Select(r => r.Weight)
-                    .FirstOrDefault(),
-                TbTypeId = q.Symptom.TbTypeId,
-                TbTypeName = q.Symptom.TbType.Name,
-            })
             .ToListAsync();
 
-        var distinctTbTypeIds = questions.Select(q => q.TbTypeId).Distinct().ToList();
+        // Build map: baseCode → List<(symptomId, tbTypeId, tbTypeName)>
+        var variantMap = new Dictionary<string, List<(int SymptomId, int TbTypeId, string TbTypeName)>>();
+        foreach (var q in allQuestions)
+        {
+            var code = q.Symptom.Code;
+            var baseCode = GetBaseCode(code);
+            if (!variantMap.ContainsKey(baseCode))
+                variantMap[baseCode] = new();
+            variantMap[baseCode].Add((q.SymptomId, q.Symptom.TbTypeId, q.Symptom.TbType.Name));
+        }
+
+        // Get all risk rule weights: (symptomId, tbTypeId) → weight
+        var allWeights = await _db.RiskRules
+            .Where(r => r.AssessmentTypeId == fullAssessmentTypeId && r.IsActive)
+            .ToDictionaryAsync(r => (r.SymptomId, r.TbTypeId), r => r.Weight);
+
+        // Filter: keep only non-variant questions (primary/base codes)
+        var questions = allQuestions
+            .Where(q => !IsVariantCode(q.Symptom.Code))
+            .Select(q =>
+            {
+                var baseCode = GetBaseCode(q.Symptom.Code);
+                var applicableTbTypes = (variantMap.TryGetValue(baseCode, out var variants)
+                    ? variants
+                    : new List<(int, int, string)>())
+                    .Select(v => new TbTypeWeightDto
+                    {
+                        TbTypeId = v.TbTypeId,
+                        TbTypeName = v.TbTypeName,
+                        Weight = allWeights.TryGetValue((v.SymptomId, v.TbTypeId), out var w) ? w : 0m,
+                    })
+                    .ToList();
+
+                return new QuickCheckQuestionDto
+                {
+                    QuestionId = q.Id,
+                    SymptomId = q.SymptomId,
+                    SymptomCode = q.Symptom.Code,
+                    SymptomName = q.Symptom.Name,
+                    SymptomDescription = q.Symptom.Description,
+                    QuestionText = q.QuestionText,
+                    SortOrder = q.SortOrder,
+                    IsRequired = q.IsRequired,
+                    Weight = allWeights.TryGetValue((q.SymptomId, q.Symptom.TbTypeId), out var primaryW) ? primaryW : 0m,
+                    TbTypeId = q.Symptom.TbTypeId,
+                    TbTypeName = q.Symptom.TbType.Name,
+                    ApplicableTbTypes = applicableTbTypes,
+                };
+            })
+            .ToList();
+
+        // Distinct TB type IDs from ALL questions (including variants), so risk levels cover all types
+        var distinctTbTypeIds = allQuestions
+            .Select(q => q.Symptom.TbTypeId)
+            .Distinct()
+            .ToList();
 
         var riskLevels = await _db.RiskLevels
             .Where(rl => distinctTbTypeIds.Contains(rl.TbTypeId))
@@ -232,22 +300,54 @@ public class AssessmentController : ControllerBase
             .GroupBy(a => a.QuestionId)
             .ToDictionary(g => g.Key, g => g.First().CfValue);
 
+        // Build variant map from ALL symptoms for this assessment type
+        var allSymptomCodes = await _db.AssessmentQuestions
+            .Include(q => q.Symptom)
+            .Where(q => q.AssessmentTypeId == request.AssessmentTypeId)
+            .Select(q => new { q.SymptomId, q.Symptom.Code, q.Symptom.TbTypeId })
+            .Distinct()
+            .ToListAsync();
+
+        // baseCode → List<(symptomId, tbTypeId)>
+        var variantMap = new Dictionary<string, List<(int SymptomId, int TbTypeId)>>();
+        foreach (var s in allSymptomCodes)
+        {
+            var baseCode = GetBaseCode(s.Code);
+            if (!variantMap.ContainsKey(baseCode))
+                variantMap[baseCode] = new();
+            variantMap[baseCode].Add((s.SymptomId, s.TbTypeId));
+        }
+
+        // Build tbTypeId → tbTypeName lookup
+        var tbTypeNames = await _db.TbTypes
+            .Where(t => allSymptomCodes.Select(s => s.TbTypeId).Distinct().Contains(t.Id))
+            .ToDictionaryAsync(t => t.Id, t => t.Name);
+
         var selectedSymptoms = new List<object>();
         var sumByTbType = new Dictionary<int, double>();
 
         foreach (var q in questions)
         {
             answerByQuestionId.TryGetValue(q.Id, out var cfValue);
-            
+
             var key = (q.SymptomId, q.Symptom.TbTypeId);
             var weight = weightBySymptomAndTb.TryGetValue(key, out var w) ? w : 0m;
 
             if (cfValue > 0)
             {
-                var contribution = (double)(weight * cfValue);
-                if (!sumByTbType.ContainsKey(q.Symptom.TbTypeId))
-                    sumByTbType[q.Symptom.TbTypeId] = 0;
-                sumByTbType[q.Symptom.TbTypeId] += contribution;
+                // Apply contribution to ALL variant TB types using their specific weights
+                var baseCode = GetBaseCode(q.Symptom.Code);
+                if (variantMap.TryGetValue(baseCode, out var variants))
+                {
+                    foreach (var (variantSymptomId, variantTbTypeId) in variants)
+                    {
+                        var variantWeight = weightBySymptomAndTb.TryGetValue((variantSymptomId, variantTbTypeId), out var vw) ? vw : weight;
+                        var contribution = (double)(variantWeight * cfValue);
+                        if (!sumByTbType.ContainsKey(variantTbTypeId))
+                            sumByTbType[variantTbTypeId] = 0;
+                        sumByTbType[variantTbTypeId] += contribution;
+                    }
+                }
             }
 
             selectedSymptoms.Add(new
@@ -287,7 +387,9 @@ public class AssessmentController : ControllerBase
             }
         }
 
-        var tbTypeIds = questions.Select(q => q.Symptom.TbTypeId).Distinct().ToList();
+        // Include ALL TB types from the assessment (not just answered questions),
+        // so that shared symptoms contribute to every variant TB type.
+        var tbTypeIds = allSymptomCodes.Select(s => s.TbTypeId).Distinct().ToList();
         var riskLevels = await _db.RiskLevels
             .Where(rl => tbTypeIds.Contains(rl.TbTypeId))
             .ToListAsync();
@@ -352,7 +454,7 @@ public class AssessmentController : ControllerBase
             var resultPayload = new
             {
                 tbTypeId,
-                tbTypeName = questions.First(q => q.Symptom.TbTypeId == tbTypeId).Symptom.TbType.Name,
+                tbTypeName = tbTypeNames.TryGetValue(tbTypeId, out var name) ? name : "Unknown",
                 combinedCF = combinedCf,
                 totalScore = score,
                 riskLevel = BuildRiskLevelPayload(matched),
@@ -400,7 +502,7 @@ public class AssessmentController : ControllerBase
                     PrimaryTbTypeId = tbTypeId,
                     RiskLevelId = matched?.Id ?? 0,
                     TotalScore = (decimal)score,
-                    SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms.Cast<dynamic>().Where(s => s.tbTypeId == tbTypeId || s.tbTypeId == 1).ToList()),
+                    SelectedSymptoms = JsonSerializer.Serialize(selectedSymptoms.Cast<dynamic>().Where(s => (int)s.tbTypeId == tbTypeId).ToList()),
                     ScoreBreakdown = JsonSerializer.Serialize(new { results = new[] { payload } }),
                     CreatedAt = submissionAtUtc,
                 });
