@@ -12,6 +12,8 @@ public class Profile
     [Required]
     public string Nickname { get; set; } = string.Empty;
 
+    public string? ProfilePicture { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }
