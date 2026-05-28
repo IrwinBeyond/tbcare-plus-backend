@@ -199,7 +199,7 @@ public class AssessmentController : ControllerBase
                 var baseCode = GetBaseCode(q.Symptom.Code);
                 var applicableTbTypes = (variantMap.TryGetValue(baseCode, out var variants)
                     ? variants
-                    : new List<(int, int, string)>())
+                    : new List<(int SymptomId, int TbTypeId, string TbTypeName)>())
                     .Select(v => new TbTypeWeightDto
                     {
                         TbTypeId = v.TbTypeId,
