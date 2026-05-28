@@ -305,7 +305,6 @@ public class AssessmentController : ControllerBase
             .Include(q => q.Symptom)
             .Where(q => q.AssessmentTypeId == request.AssessmentTypeId)
             .Select(q => new { q.SymptomId, q.Symptom.Code, q.Symptom.TbTypeId })
-            .Distinct()
             .ToListAsync();
 
         // baseCode → List<(symptomId, tbTypeId)>
@@ -418,20 +417,17 @@ public class AssessmentController : ControllerBase
         }
 
         // Build symptomId → set of tbTypeIds it contributes to (for shared symptom display)
-        var codeToTbTypes = new Dictionary<string, HashSet<int>>();
-        foreach (var s in allSymptomCodes)
-        {
-            var baseCode = GetBaseCode(s.Code);
-            if (!codeToTbTypes.ContainsKey(baseCode))
-                codeToTbTypes[baseCode] = new HashSet<int>();
-            codeToTbTypes[baseCode].Add(s.TbTypeId);
-        }
         var symptomTbTypes = new Dictionary<int, HashSet<int>>();
-        foreach (var s in allSymptomCodes)
+        foreach (var (_, variants) in variantMap)
         {
-            if (!IsVariantCode(s.Code))
+            var allTbTypeIds = variants.Select(v => v.TbTypeId).ToHashSet();
+            foreach (var (sId, _) in variants)
             {
-                symptomTbTypes[s.SymptomId] = codeToTbTypes[GetBaseCode(s.Code)];
+                var code = allSymptomCodes.First(x => x.SymptomId == sId).Code;
+                if (!IsVariantCode(code))
+                {
+                    symptomTbTypes[sId] = allTbTypeIds;
+                }
             }
         }
 
