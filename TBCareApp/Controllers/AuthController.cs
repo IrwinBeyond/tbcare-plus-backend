@@ -171,6 +171,7 @@ public class AuthController : ControllerBase
             Id = userId.ToString(),
             Email = email,
             FullName = nickname,
+            ProfilePicture = profile?.ProfilePicture,
             Role = User.FindFirst("role")?.Value ?? "authenticated",
             IsActive = true,
             CreatedAt = DateTime.UtcNow,
@@ -178,6 +179,33 @@ public class AuthController : ControllerBase
         };
 
         return Ok(ApiResponse<UserDto>.Ok(userDto, "User profile retrieved successfully."));
+    }
+
+    [HttpPut("me")]
+    [Microsoft.AspNetCore.Authorization.Authorize]
+    public async Task<IActionResult> UpdateMe([FromBody] UpdateProfileRequest request)
+    {
+        var subClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
+                      ?? User.FindFirst("sub");
+        if (subClaim is null || !Guid.TryParse(subClaim.Value, out var userId))
+            return Unauthorized(ApiResponse<object>.Fail("User ID not found in token."));
+
+        var profile = await _db.Profiles.FindAsync(userId);
+        if (profile == null)
+        {
+            profile = new Profile { Id = userId, CreatedAt = DateTime.UtcNow };
+            _db.Profiles.Add(profile);
+        }
+
+        if (request.Nickname != null)
+            profile.Nickname = request.Nickname;
+        if (request.ProfilePicture != null)
+            profile.ProfilePicture = request.ProfilePicture;
+        profile.UpdatedAt = DateTime.UtcNow;
+
+        await _db.SaveChangesAsync();
+
+        return Ok(ApiResponse<object>.Ok(new { message = "Profile updated." }, "Profile updated successfully."));
     }
 
     /// <summary>
