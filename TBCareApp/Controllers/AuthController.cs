@@ -181,14 +181,27 @@ public class AuthController : ControllerBase
         return Ok(ApiResponse<UserDto>.Ok(userDto, "User profile retrieved successfully."));
     }
 
+    // Cap profile-update payloads at 2 MB. With client-side resize+JPEG q80
+    // a profile picture should be well under 200 KB; the extra headroom
+    // covers nickname-only updates and any future fields without inviting
+    // multi-megabyte payloads that block the connection.
     [HttpPut("me")]
     [Microsoft.AspNetCore.Authorization.Authorize]
+    [Microsoft.AspNetCore.Mvc.RequestSizeLimit(2 * 1024 * 1024)]
     public async Task<IActionResult> UpdateMe([FromBody] UpdateProfileRequest request)
     {
         var subClaim = User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)
                       ?? User.FindFirst("sub");
         if (subClaim is null || !Guid.TryParse(subClaim.Value, out var userId))
             return Unauthorized(ApiResponse<object>.Fail("User ID not found in token."));
+
+        if (request.ProfilePicture != null)
+        {
+            var pic = request.ProfilePicture.Trim();
+            if (!IsAllowedProfilePicture(pic, out var picError))
+                return BadRequest(ApiResponse<object>.Fail(picError));
+            request.ProfilePicture = pic;
+        }
 
         var profile = await _db.Profiles.FindAsync(userId);
         if (profile == null)
@@ -198,7 +211,7 @@ public class AuthController : ControllerBase
         }
 
         if (request.Nickname != null)
-            profile.Nickname = request.Nickname;
+            profile.Nickname = request.Nickname.Trim();
         if (request.ProfilePicture != null)
             profile.ProfilePicture = request.ProfilePicture;
         profile.UpdatedAt = DateTime.UtcNow;
@@ -206,6 +219,49 @@ public class AuthController : ControllerBase
         await _db.SaveChangesAsync();
 
         return Ok(ApiResponse<object>.Ok(new { message = "Profile updated." }, "Profile updated successfully."));
+    }
+
+    // Hard cap on the stored picture string (data URL + metadata). ~1.4 MB
+    // accommodates a ~1 MB raw image after base64 inflation (×1.37).
+    private const int MaxProfilePictureLength = 1_400_000;
+
+    private static readonly string[] AllowedPictureMimePrefixes =
+    {
+        "data:image/jpeg;base64,",
+        "data:image/jpg;base64,",
+        "data:image/png;base64,",
+        "data:image/webp;base64,",
+    };
+
+    private static bool IsAllowedProfilePicture(string value, out string error)
+    {
+        if (value.Length == 0)
+        {
+            error = string.Empty; // empty string clears the picture; allowed
+            return true;
+        }
+
+        if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            value.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+        {
+            error = string.Empty;
+            return true; // remote URL is fine; nothing to validate locally
+        }
+
+        if (!AllowedPictureMimePrefixes.Any(p => value.StartsWith(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = "Format gambar tidak didukung. Gunakan JPEG, PNG, atau WebP.";
+            return false;
+        }
+
+        if (value.Length > MaxProfilePictureLength)
+        {
+            error = "Ukuran gambar terlalu besar. Maksimal 1 MB.";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
     }
 
     [HttpPost("change-password")]
