@@ -7,7 +7,9 @@ ASP.NET Core backend for the TBCare+ tuberculosis early-detection expert system.
 - **Runtime**: .NET 10
 - **Framework**: ASP.NET Core Web API
 - **Database**: PostgreSQL (via Entity Framework Core + Npgsql)
-- **Auth**: Supabase JWT (HS256 / RS256)
+- **Auth**: Supabase JWT — symmetric HS256 (JWT secret) or asymmetric RS256 (JWKS via Authority)
+- **API Docs**: Swagger / OpenAPI (Bearer auth) served at the root
+- **CORS**: Configurable allowed origins via `Cors:AllowedOrigins`
 - **Deploy**: Azure App Service via Docker
 
 ## Endpoints
@@ -33,6 +35,19 @@ ASP.NET Core backend for the TBCare+ tuberculosis early-detection expert system.
 | GET | `/api/v1/assessment/history-sessions` | List grouped history sessions |
 | GET | `/api/v1/assessment/history-sessions/{key}` | Session detail with insights |
 | GET | `/api/v1/assessment/history/{id}` | Single assessment details |
+
+### Configuration / Reference Data
+
+CRUD endpoints backing the expert-system knowledge base and the assessment config served to clients. Read (`GET`) endpoints are public; create/update/delete require a valid JWT.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET / POST / PUT / DELETE | `/api/v1/assessment-types` | Assessment types (quick check, full) |
+| GET (`by-type/{id}`) / POST / PUT / DELETE | `/api/v1/assessment-questions` | Questions per assessment type |
+| GET / POST / PUT / DELETE | `/api/v1/symptoms` | Symptom catalog |
+| GET / POST / PUT / DELETE | `/api/v1/tb-types` | TB types for cross-type scoring |
+| GET / POST / PUT / DELETE | `/api/v1/risk-levels` | Risk level thresholds |
+| GET | `/api/v1/risk-rules` | Symptom-to-TB-type certainty rules |
 
 ## Getting Started
 
@@ -76,10 +91,10 @@ docker run -p 8080:8080 --env-file TBCareApp/.env tbcare-plus-api
 ```
 TBCareApp/
 ├── Controllers/    # API controllers
-├── Data/           # DbContext, migrations
+├── Data/           # AppDbContext + init.sql (schema/seed)
 ├── DTOs/           # Request/response models
 ├── Interfaces/     # Service interfaces
-├── Models/         # Domain entities
-├── Services/       # Business logic, Supabase integration
-└── Program.cs      # App entry point, DI, middleware
+├── Models/         # Domain entities (Profile, Symptom, TbType, RiskRule, ...)
+├── Service/        # Business logic, Supabase history writer
+└── Program.cs      # App entry point, DI, JWT auth, CORS, Swagger
 ```
