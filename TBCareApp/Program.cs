@@ -1,6 +1,7 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
@@ -190,6 +191,18 @@ builder.Services
 builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
 
+// ── Forwarded Headers (behind Azure App Service reverse proxy) ─────
+// App Service terminates TLS at its front end and forwards plain HTTP
+// to the container. Honoring X-Forwarded-Proto lets HTTPS redirection
+// and scheme-aware logic see the original https scheme instead of http.
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+    // The App Service front end is not a loopback proxy, so trust it.
+    options.KnownIPNetworks.Clear();
+    options.KnownProxies.Clear();
+});
+
 // ── Health Checks ───────────────────────────────────────────────────
 builder.Services
     .AddHealthChecks()
@@ -260,6 +273,9 @@ if (!string.IsNullOrEmpty(envPort))
 }
 
 var app = builder.Build();
+
+// Must run before any middleware that inspects the request scheme/IP.
+app.UseForwardedHeaders();
 
 if (app.Environment.IsDevelopment())
 {
