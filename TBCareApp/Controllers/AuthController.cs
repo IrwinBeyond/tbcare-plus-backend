@@ -113,35 +113,84 @@ public class AuthController : ControllerBase
         }
 
         var authResponse = BuildAuthResponse(responseBody);
-
-        // Override FullName with nickname from profiles table
-        if (Guid.TryParse(authResponse.User.Id, out var userId))
-        {
-            var profile = await _db.Profiles.FindAsync(userId);
-            if (profile != null)
-            {
-                if (!string.IsNullOrEmpty(profile.Nickname))
-                    authResponse.User.FullName = profile.Nickname;
-            }
-            else
-            {
-                var nickname = authResponse.User.FullName ?? "";
-                if (!string.IsNullOrEmpty(nickname))
-                {
-                    profile = new Profile
-                    {
-                        Id = userId,
-                        Nickname = nickname,
-                        CreatedAt = DateTime.UtcNow,
-                        UpdatedAt = DateTime.UtcNow
-                    };
-                    _db.Profiles.Add(profile);
-                    await _db.SaveChangesAsync();
-                }
-            }
-        }
+        await ApplyProfileNicknameAsync(authResponse);
 
         return Ok(ApiResponse<AuthResponseDto>.Ok(authResponse, "Login successful."));
+    }
+
+    [HttpPost("refresh")]
+    public async Task<IActionResult> Refresh([FromBody] RefreshRequest request)
+    {
+        if (string.IsNullOrEmpty(request.RefreshToken))
+            return BadRequest(ApiResponse<object>.Fail("Refresh token is required."));
+
+        var supabaseUrl = _config["Supabase:Url"];
+        var supabaseKey = _config["Supabase:Key"];
+
+        if (string.IsNullOrEmpty(supabaseUrl) || string.IsNullOrEmpty(supabaseKey))
+            return StatusCode(500, ApiResponse<object>.Fail("Supabase configuration is missing."));
+
+        using var http = _httpClientFactory.CreateClient();
+
+        var refreshPayload = new { refresh_token = request.RefreshToken };
+
+        var requestBody = new StringContent(
+            JsonSerializer.Serialize(refreshPayload), Encoding.UTF8, "application/json");
+
+        var httpRequest = new HttpRequestMessage(HttpMethod.Post,
+            $"{supabaseUrl}/auth/v1/token?grant_type=refresh_token")
+        {
+            Content = requestBody
+        };
+        httpRequest.Headers.Add("apikey", supabaseKey);
+
+        var response = await http.SendAsync(httpRequest);
+        var responseBody = await response.Content.ReadAsStringAsync();
+
+        if (!response.IsSuccessStatusCode)
+        {
+            var msg = ParseSupabaseError(responseBody, "Sesi telah berakhir. Silakan login kembali.");
+            return Unauthorized(ApiResponse<object>.Fail(msg));
+        }
+
+        var authResponse = BuildAuthResponse(responseBody);
+        await ApplyProfileNicknameAsync(authResponse);
+
+        return Ok(ApiResponse<AuthResponseDto>.Ok(authResponse, "Token refreshed."));
+    }
+
+    /// <summary>
+    /// Overrides the response's FullName with the nickname stored in the profiles
+    /// table (creating the profile row from the token's display name on first use).
+    /// Shared by Login and Refresh so both return a consistent display name.
+    /// </summary>
+    private async Task ApplyProfileNicknameAsync(AuthResponseDto authResponse)
+    {
+        if (!Guid.TryParse(authResponse.User.Id, out var userId))
+            return;
+
+        var profile = await _db.Profiles.FindAsync(userId);
+        if (profile != null)
+        {
+            if (!string.IsNullOrEmpty(profile.Nickname))
+                authResponse.User.FullName = profile.Nickname;
+        }
+        else
+        {
+            var nickname = authResponse.User.FullName ?? "";
+            if (!string.IsNullOrEmpty(nickname))
+            {
+                profile = new Profile
+                {
+                    Id = userId,
+                    Nickname = nickname,
+                    CreatedAt = DateTime.UtcNow,
+                    UpdatedAt = DateTime.UtcNow
+                };
+                _db.Profiles.Add(profile);
+                await _db.SaveChangesAsync();
+            }
+        }
     }
 
     [HttpGet("me")]
@@ -418,6 +467,11 @@ public class AuthLoginRequest
 {
     public string Email { get; set; } = string.Empty;
     public string Password { get; set; } = string.Empty;
+}
+
+public class RefreshRequest
+{
+    public string RefreshToken { get; set; } = string.Empty;
 }
 
 public class ChangePasswordRequest
