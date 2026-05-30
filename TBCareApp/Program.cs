@@ -1,9 +1,12 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using TBCarePlus.API.Data;
+using TBCarePlus.API.HealthChecks;
 using TBCarePlus.API.Interfaces;
 using TBCarePlus.API.Services;
 
@@ -187,6 +190,11 @@ builder.Services
 builder.Services.AddAuthorization();
 builder.Services.AddHttpClient();
 
+// ── Health Checks ───────────────────────────────────────────────────
+builder.Services
+    .AddHealthChecks()
+    .AddCheck<DatabaseHealthCheck>("database", tags: ["ready"]);
+
 // ── Service Registrations ──────────────────────────────────────────
 builder.Services.AddScoped<ITbTypeService,    TbTypeService>();
 builder.Services.AddScoped<ISymptomService,   SymptomService>();
@@ -271,6 +279,20 @@ if (!app.Environment.IsDevelopment())
 app.UseCors();
 app.UseAuthentication();
 app.UseAuthorization();
+
+// ── Health Probe Endpoints (unauthenticated) ───────────────────────
+// Liveness: process is up. Excludes all checks so it never depends on the DB.
+app.MapHealthChecks("/healthz", new HealthCheckOptions
+{
+    Predicate = _ => false,
+}).AllowAnonymous();
+
+// Readiness: app can serve traffic (database reachable).
+app.MapHealthChecks("/readyz", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+}).AllowAnonymous();
+
 app.MapControllers();
 
 using (var scope = app.Services.CreateScope())

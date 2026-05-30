@@ -10,7 +10,7 @@ ASP.NET Core backend for the TBCare+ tuberculosis early-detection expert system.
 - **Auth**: Supabase JWT — symmetric HS256 (JWT secret) or asymmetric RS256 (JWKS via Authority)
 - **API Docs**: Swagger / OpenAPI (Bearer auth) served at the root
 - **CORS**: Configurable allowed origins via `Cors:AllowedOrigins`
-- **Deploy**: Azure App Service via Docker
+- **Deploy**: Azure App Service (direct code deploy)
 
 ## Endpoints
 
@@ -79,12 +79,14 @@ dotnet run
 
 The API starts at `http://localhost:5181` with Swagger UI at the root.
 
-### Docker
+## Health Probes
 
-```bash
-docker build -t tbcare-plus-api .
-docker run -p 8080:8080 --env-file TBCareApp/.env tbcare-plus-api
-```
+Unauthenticated endpoints for cloud load balancers and platform health checks (e.g. the Azure App Service **Health check** path):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/healthz` | Liveness — returns `200` if the process is running |
+| GET | `/readyz` | Readiness — returns `200` only if the database is reachable |
 
 ## Project Structure
 
