@@ -7,10 +7,10 @@ ASP.NET Core backend for the TBCare+ tuberculosis early-detection expert system.
 - **Runtime**: .NET 10
 - **Framework**: ASP.NET Core Web API
 - **Database**: PostgreSQL (via Entity Framework Core + Npgsql)
-- **Auth**: Supabase JWT — symmetric HS256 (JWT secret) or asymmetric RS256 (JWKS via Authority)
-- **API Docs**: Swagger / OpenAPI (Bearer auth) served at the root
+- **Auth**: Supabase JWT — symmetric HS256 (JWT secret) or asymmetric RS256 (JWKS via Authority); refresh tokens enable silent session renewal
+- **API Docs**: Swagger / OpenAPI (Bearer auth) served at the root — **Development only**
 - **CORS**: Configurable allowed origins via `Cors:AllowedOrigins`
-- **Deploy**: Azure App Service (direct code deploy)
+- **Deploy**: Azure App Service. Honors `X-Forwarded-Proto`/`-For` and enforces HTTPS redirection behind the App Service reverse proxy in non-Development environments
 
 ## Endpoints
 
@@ -19,7 +19,8 @@ ASP.NET Core backend for the TBCare+ tuberculosis early-detection expert system.
 | Method | Path | Description |
 |--------|------|-------------|
 | POST | `/api/v1/auth/register` | Register new user |
-| POST | `/api/v1/auth/login` | Login, returns Supabase JWT |
+| POST | `/api/v1/auth/login` | Login, returns Supabase JWT + refresh token |
+| POST | `/api/v1/auth/refresh` | Exchange a refresh token for a new access token (silent session renewal) |
 | GET | `/api/v1/auth/me` | Get current user profile |
 | PUT | `/api/v1/auth/me` | Update user profile |
 | POST | `/api/v1/auth/change-password` | Change password |
@@ -64,11 +65,17 @@ Create a `.env` file in `TBCareApp/` with:
 DATABASE_URL=Host=localhost;Database=tbcare_plus;Username=postgres;Password=yourpassword
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 SUPABASE_JWT_SECRET=your-jwt-secret
+# Optional — the assessment-history writer falls back to SUPABASE_KEY + the
+# user's bearer token when this is absent.
+SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
 ```
 
 Alternatively, configure `appsettings.json` directly.
+
+> **The `.env` file is loaded only in Development.** In Production (Azure App Service),
+> set the same keys as **Configuration → Application settings** instead. `SUPABASE_JWT_SECRET`
+> is **required** there — the app throws at startup if it's missing.
 
 ### Run
 
